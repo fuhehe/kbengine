@@ -101,9 +101,38 @@ void ClientObject::reset(void)
 	connectedBaseapp_ = false;
 }
 
+void ClientObject::clearStates(void)
+{
+	if (pTCPPacketReceiverEx_)
+		Bots::getSingleton().networkInterface().dispatcher().deregisterReadFileDescriptor(*pTCPPacketReceiverEx_->pEndPoint());
+
+	if (pKCPPacketReceiverEx_)
+		Bots::getSingleton().networkInterface().dispatcher().deregisterReadFileDescriptor(*pKCPPacketReceiverEx_->pEndPoint());
+
+	pServerChannel_->fina_kcp();
+	pServerChannel_->stopSend();
+	pServerChannel_->pPacketSender(NULL);
+	pServerChannel_->pPacketReceiver(NULL);
+
+	SAFE_RELEASE(pTCPPacketSenderEx_);
+	SAFE_RELEASE(pTCPPacketReceiverEx_);
+
+	SAFE_RELEASE(pKCPPacketSenderEx_);
+	SAFE_RELEASE(pKCPPacketReceiverEx_);
+
+	if (pServerChannel_->pEndPoint())
+	{
+		pServerChannel_->pEndPoint()->destroySSL();
+		pServerChannel_->pEndPoint()->close();
+		pServerChannel_->pEndPoint(NULL);
+	}
+}
+
 //-------------------------------------------------------------------------------------
 bool ClientObject::initCreate()
 {
+	clearStates();
+
 	Network::EndPoint* pEndpoint = Network::EndPoint::createPoolObject(OBJECTPOOL_POINT);
 	
 	pEndpoint->socket(SOCK_STREAM);
@@ -174,6 +203,8 @@ bool ClientObject::initCreate()
 //-------------------------------------------------------------------------------------
 bool ClientObject::initLoginBaseapp()
 {
+	clearStates();
+
 	if(pTCPPacketReceiverEx_)
 		Bots::getSingleton().networkInterface().dispatcher().deregisterReadFileDescriptor(*pTCPPacketReceiverEx_->pEndPoint());
 
@@ -222,14 +253,8 @@ bool ClientObject::initLoginBaseapp()
 			// 等待接收返回包
 			Network::UDPPacket* pHelloAckUDPPacket = Network::UDPPacket::createPoolObject(OBJECTPOOL_POINT);
 
-			fd_set	frds;
-			struct timeval tv = { 0, 1000000 }; // 1s
-
-			FD_ZERO(&frds);
-			FD_SET((int)(*pUdpEndpoint), &frds);
-
-			int selgot = select((*pUdpEndpoint) + 1, &frds, NULL, NULL, &tv);
-			if (selgot <= 0)
+			bool ret = Network::kbe_poll(int(*pUdpEndpoint));
+			if (!ret)
 			{
 				Network::UDPPacket::reclaimPoolObject(pHelloAckUDPPacket);
 				ERROR_MSG("ClientObject::initLogin: recvfrom timeout!\n");
